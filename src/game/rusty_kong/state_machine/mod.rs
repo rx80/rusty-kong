@@ -61,11 +61,13 @@ struct States {
     next: GameState,
 }
 
-static mut STATE:States = States {
-    previous: GameState::None,
-    current:  GameState::None,
-    next:     GameState::None
-};
+thread_local!(
+    static STATE:RefCell<States> = RefCell::new(States {
+        previous: GameState::None,
+        current:  GameState::None,
+        next:     GameState::None
+    });
+);
 
 mod boot;
 use self::boot::*;
@@ -162,10 +164,32 @@ lazy_static! {
     );
 }
 
+fn get_previous_state() -> GameState {
+    STATE.with(|cell| cell.borrow().previous)
+}
+
+fn set_previous_state(state:GameState) {
+    STATE.with(|cell| {cell.borrow_mut().previous = state;});
+}
+
+fn get_next_state() -> GameState {
+    STATE.with(|cell| cell.borrow().next)
+}
+
+fn set_next_state(state:GameState) {
+    STATE.with(|cell| {cell.borrow_mut().next = state;});
+}
+
+fn get_current_state() -> GameState {
+    STATE.with(|cell| cell.borrow().current)
+}
+
+fn set_current_state(state:GameState) {
+    STATE.with(|cell| {cell.borrow_mut().current = state;});
+}
+
 pub fn game_state_go(state:GameState) {
-    unsafe {
-        STATE.next = state;
-    }
+    STATE.with(|cell| {cell.borrow_mut().next = state;});
 }
 
 pub fn game_state_init() {
@@ -177,32 +201,30 @@ fn get_state_handlers<'a>(state: GameState) -> &'a StateHandlers {
 }
 
 pub fn game_state_update() {
-    unsafe {
-        if STATE.next != GameState::None {
-            STATE.previous = STATE.current;
-            debug!("transition from: {}.", STATE.previous);
-            let previous_handlers = get_state_handlers(STATE.previous);
-            debug!("calling {}_leave().", STATE.previous);
-            (previous_handlers.leave)();
-            let mut first_update = previous_handlers.first_update.borrow_mut();
-            *first_update = true;
+    if get_next_state() != GameState::None {
+        set_previous_state(get_current_state());
+        debug!("transition from: {}.", get_previous_state());
+        let previous_handlers = get_state_handlers(get_previous_state());
+        debug!("calling {}_leave().", get_previous_state());
+        (previous_handlers.leave)();
+        let mut first_update = previous_handlers.first_update.borrow_mut();
+        *first_update = true;
 
-            STATE.current = STATE.next;
-            debug!("transition to: {}.", STATE.current);
-            STATE.next = GameState::None;
+        set_current_state(get_next_state());
+        debug!("transition to: {}.", get_current_state());
+        set_next_state(GameState::None);
 
-            let current_handlers = get_state_handlers(STATE.current);
-            debug!("calling {}_enter.", STATE.current);
-            (current_handlers.enter)();
-        } else {
-            let handlers = get_state_handlers(STATE.current);
-            let mut first_update = handlers.first_update.borrow_mut();
-            if *first_update {
-                debug!("calling {}_update.", STATE.current);
-                debug!("NOTE: only the first call is logged to avoid noise.");
-                *first_update = false;
-            }
-            (handlers.update)();
+        let current_handlers = get_state_handlers(get_current_state());
+        debug!("calling {}_enter.", get_current_state());
+        (current_handlers.enter)();
+    } else {
+        let handlers = get_state_handlers(get_current_state());
+        let mut first_update = handlers.first_update.borrow_mut();
+        if *first_update {
+            debug!("calling {}_update.", get_current_state());
+            debug!("NOTE: only the first call is logged to avoid noise.");
+            *first_update = false;
         }
+        (handlers.update)();
     }
 }
